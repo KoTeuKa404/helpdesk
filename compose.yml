@@ -39,7 +39,7 @@ services:
     env_file: .env
     depends_on:
       db: {condition: service_healthy}
-    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_kb && python manage.py bootstrap_operator"]
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_kb && python manage.py bootstrap_operator && python manage.py bootstrap_adminroot"]
     restart: "no"
 
   web:
@@ -63,7 +63,7 @@ services:
 
   beat:
     <<: *app
-    command: ["celery", "-A", "config", "beat", "--loglevel=info"]
+    command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     depends_on:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
@@ -73,7 +73,7 @@ services:
     working_dir: /mock
     command: ["python", "-m", "mock_helpdesk.server"]
     volumes:
-      - ./:/mock:ro
+      - ./mock_helpdesk:/mock/mock_helpdesk:ro
       - mockdata:/data
     ports:
       - "127.0.0.1:8021:8001"

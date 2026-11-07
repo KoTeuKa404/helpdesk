@@ -1,0 +1,12 @@
+# Optional local AI gateway integration. Do NOT include this file for normal deployment.
+# Requires an existing Docker network, e.g. local-ai-api.
+services:
+  worker:
+    networks:
+      - default
+      - local-ai-api
+
+networks:
+  local-ai-api:
+    external: true
+    name: ${LOCAL_AI_NETWORK:-local-ai-api}

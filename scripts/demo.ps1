@@ -1,4 +1,4 @@
-# Sends one event, then you can review it in the operator dashboard.
+﻿# Sends one event, then you can review it in the operator dashboard.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $root '.env'

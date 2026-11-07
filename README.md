@@ -1,176 +1,146 @@
-# AI-first Helpdesk · Django + DRF
+# AI-first Helpdesk — Django REST Framework
 
-Невеликий сервіс для тестового завдання AI-first Backend Engineer. Приймає webhook від умовного Helpdesk, шукає релевантні статті бази знань, генерує **чернетку** з LLM, чекає рішення оператора і тільки після підтвердження надсилає відповідь у mock Helpdesk.
+AI-first Backend Engineer take-home project: accept incoming helpdesk webhooks, find relevant knowledge-base articles, generate AI **drafts** asynchronously, require operator approval, and only then deliver replies to a mock Helpdesk.
 
-## Стек
+[Українська версія](README_UA.md) · [MIT License](LICENSE) · [Agent instructions](AGENTS.md)
 
-- **Django 5.2 LTS + Django REST Framework** — webhook, API, операторський кабінет і Django Admin.
-- **PostgreSQL 16** — звернення, дедуплікація `event_id`, чернетки, переходи станів, надійний журнал доставки.
-- **Celery + Redis** — асинхронна генерація та доставка, відновлення завислих/непоставлених задач через Celery Beat.
-- **OpenAI API** (опціонально) або **mock LLM** зі штучною затримкою 5–30 секунд.
-- **Gunicorn + Nginx + Docker Compose** — запуск однією командою.
-- **Mock Helpdesk** — локальна HTTP-система з SQLite-журналом та підтримкою `Idempotency-Key`.
+## Stack
 
-> Це окремий навчальний проєкт. Структуру Docker, Django settings, Gunicorn, Celery та PostgreSQL адаптовано за принципом прикладу `C:\Users\home\Desktop\project\alive\BackEnd\doker`, але без копіювання чужої бази, ключів або даних.
+- Django 5.2 LTS, Django REST Framework, OpenAPI/Swagger UI
+- PostgreSQL 16 for tickets, webhook events, moderation and delivery history
+- Redis, Celery worker and Celery Beat for asynchronous jobs, retries and recovery
+- Gemini, OpenAI, OpenAI-compatible providers or deterministic mock
+- Gunicorn, Nginx, Docker Compose and a persistent mock Helpdesk receiver
 
-## Швидкий запуск (Windows / PowerShell)
 
-Потрібні Docker Desktop із Linux-контейнерами та Windows PowerShell. Порти 8020 і 8021 мають бути вільними.
+## Quick start (Windows / PowerShell)
+
+Install Docker Desktop and enable Linux containers. Ports **8020** and **8021** must be free.
 
 ```powershell
-# Відкрийте PowerShell у директорії цього репозиторію
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-
 docker compose up -d --build
-# Перевірити стан
 docker compose ps
-docker compose logs --tail=60 web worker beat migrate
 ```
 
-Скрипт `setup.ps1` **один раз** створює `.env` із випадковими секретами. Не перезаписує існуючий `.env` і не друкує паролі. Щоб переглянути локальні облікові дані:
+The setup script creates a local `.env` with strong random secrets only if one does not already exist. The operator account is `operator`; the dedicated Django Admin account is `adminroot`. Generated passwords remain in your local `.env`.
 
-```powershell
-Select-String '^(OPERATOR_USERNAME|OPERATOR_PASSWORD)=' .env
-```
+| Interface | Local address |
+| --- | --- |
+| Operator dashboard | http://127.0.0.1:8020/ |
+| Django Admin | http://127.0.0.1:8020/admin/ |
+| Health | http://127.0.0.1:8020/health/ |
+| Webhook | POST http://127.0.0.1:8020/webhooks/helpdesk |
+| Operator API | http://127.0.0.1:8020/api/v1/tickets/ |
+| API documentation | http://127.0.0.1:8020/api/docs/ |
+| Mock Helpdesk replies | http://127.0.0.1:8021/replies |
 
-Система відкривається за адресами:
+PostgreSQL and Redis have no public host ports.
 
-| Що | Адреса |
-|---|---|
-| Кабінет оператора | **http://127.0.0.1:8020/** |
-| Django Admin / статті бази знань | http://127.0.0.1:8020/admin/ |
-| Health check | http://127.0.0.1:8020/health/ |
-| Прийом webhook | **POST http://127.0.0.1:8020/webhooks/helpdesk** |
-| DRF API звернень (авторизований оператор) | http://127.0.0.1:8020/api/v1/tickets/ |
-| Отримані mock Helpdesk відповіді | http://127.0.0.1:8021/replies |
-
-Адміністраторський обліковий запис створюється з `.env` лише за відсутності. Користувач є `is_staff=True`, але **не** суперкористувач; для редагування статей через Django Admin знадобиться надати `is_superuser` або відповідні права командою Django. Для тестового середовища можна створити окремого суперкористувача:
-
-```powershell
-docker compose exec web python manage.py createsuperuser
-```
-
-### Перевірка повного сценарію
+## End-to-end workflow
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1
 ```
 
-Скрипт згенерує випадкові `ticket_id` / `event_id`, візьме `WEBHOOK_SECRET` із `.env` і надішле запит. Webhook повертає HTTP **202** одразу після збереження в PostgreSQL, **не чекаючи** генерації. Далі:
-
-1. Відкрийте http://127.0.0.1:8020/, увійдіть як оператор.
-2. Через 5–30 секунд mock LLM сформує чернетку (або реальний LLM, якщо налаштований ключ).
-3. Відредагуйте текст, натисніть **Підтвердити** або **Відхилити**.
-4. У випадку підтвердження перевірте результат у http://127.0.0.1:8021/replies — рівно один запис для цього тикета.
-5. Надішліть той самий webhook ще раз: нова чернетка та повторна відповідь не створюються.
-
-Формат JSON події:
+Or POST to `/webhooks/helpdesk` with `Content-Type: application/json` and `X-Webhook-Secret: <WEBHOOK_SECRET from local .env>`:
 
 ```json
 {
-  "event_id": "evt_8f2a",
+  "event_id": "evt-1042",
   "ticket_id": "T-1042",
   "customer_email": "user@example.com",
-  "message": "Не можу експортувати звіт у PDF",
+  "message": "How do I export a PDF report?",
   "reply_url": "http://mock-helpdesk:8001/tickets/T-1042/replies"
 }
 ```
 
-Вимога до заголовка webhook: `X-Webhook-Secret: <WEBHOOK_SECRET з .env>`. Для mock reply_url важлива **внутрішня** адреса Docker `mock-helpdesk:8001`, а не зовнішня `127.0.0.1:8021`.
+`mock-helpdesk:8001` is an **internal Docker hostname**. Do not use `127.0.0.1:8021` for the callback.
 
-Успішна відповідь mock Helpdesk на `POST <reply_url>` — **201 Created** і тіло:
+1. The webhook validates the payload, commits it to PostgreSQL and responds with HTTP **202** without waiting for AI.
+2. Celery generates a draft using retrieved knowledge-base context.
+3. An authenticated operator reviews and optionally edits the draft, then **approves or rejects** it.
+4. Approval creates one delivery with an immutable `Idempotency-Key`; rejection never sends.
+5. The mock receiver stores the approved reply. Duplicate webhook events do not trigger more drafts or deliveries; conflicting payloads return **409**.
 
-```json
-{"ticket_id":"T-1042","message":"Щоб експортувати звіт у PDF, відкрийте..."}
-```
+The operator dashboard and API use a staff session and CSRF protection. Django Admin is limited to `adminroot`: knowledge-base articles are editable, while ticket, delivery and webhook logs are **read-only**.
 
-## API
+## LLM providers
 
-| Метод | URL | Хто може | Результат |
-|---|---|---|---|
-| POST | `/webhooks/helpdesk` | Сервіс із правильним `X-Webhook-Secret` | HTTP 202; `duplicate: true` для повтору |
-| GET | `/api/v1/tickets/` | Staff-сесія оператора | Список до 1000 останніх звернень |
-| POST | `/api/v1/tickets/{ticket_id}/approve/` | Staff-сесія + CSRF | Погоджує чернетку (можна передати `{"message":"..."}`) |
-| POST | `/api/v1/tickets/{ticket_id}/reject/` | Staff-сесія + CSRF | Відхиляє чернетку, **без доставки** |
-| GET | `/health/` | Публічно | Перевірка з'єднання з БД |
-
-Django Admin та операторський UI використовують сесію / CSRF. Анонімні користувачі й звичайні (не `staff`) облікові записи не можуть переглядати клієнтські дані.
-
-## Обробка надійності та захист від дублікатів
-
-**Webhook:** Транзакція PostgreSQL створює `Ticket` і `WebhookEvent`. Поле `event_id` унікальне, так само як `ticket_id`. Повтор тієї самої події → 202, без нової генерації. Спроба повторити той самий `event_id` з іншим payload або змінити вміст існуючого `ticket_id` → 409. Валідація обмежує розміри полів і дозволені вузли callback.
-
-**Фонова обробка:** Celery Beat сканує PostgreSQL кожні 3 секунди й планує задачі, що залишилися в черзі (зокрема після збою Redis). Worker використовує транзакції з `SELECT FOR UPDATE` і UUID-токени, тому одночасні задачі не переписують одна одну. Зависла генерація відновлюється після 120 секунд; зникла доставка — після 45 секунд.
-
-**LLM:** Одне вікно rate limit — до **60 викликів за 60 секунд** на весь сервіс (Redis Lua + sliding window). Не включено реальних API-запитів без ключа; mock режим працює із затримкою `MOCK_MIN_DELAY=5`, `MOCK_MAX_DELAY=30` секунд. Після 3 помилок генерація отримує стан `generation_failed` і **не губиться** з БД. Prompt injection обмежується тим, що і текст клієнта, і статті KB вважаються недовіреними даними; кожна відповідь потребує ручного погодження.
-
-**Delivery:** Надсилання тільки після переходу у `approved`. Створюється один `Delivery` на тикет із постійним `Idempotency-Key`. Повтори при HTTP 5xx/429 або помилці мережі здійснюються із backoff; HTTP 4xx (крім 429) позначаються постійною помилкою. Mock Helpdesk дедуплікує по `Idempotency-Key` у власному SQLite-сховищі. Для зовнішнього реального Helpdesk гарантія «не отримати двічі» **залежить від підтримки ідемпотентності на його боці** — лише мережевим HTTP-клієнтом забезпечити exactly-once неможливо.
-
-**Навантаження:** 500 нових webhook за 10 хвилин приймаються без очікування LLM, за наявності ресурсів PostgreSQL. Celery worker налаштований на 24 I/O-потоки для затримки 5–30 секунд; глобальна квота LLM не перевищує 60/хв. Немає твердження, що всі 500 LLM-відповідей завершаться за 10 хвилин: фактична пропускна здатність залежить від затримки LLM, квоти й ресурсів.
-
-## Режим реального LLM
-
-У `.env` встановіть:
-
-```env
-LLM_MODE=openai
-OPENAI_API_KEY=власний_ключ
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-Далі:
+Choose a mode in your private `.env`, then recreate the worker:
 
 ```powershell
-docker compose up -d --force-recreate web worker beat
+docker compose up -d --force-recreate worker
 ```
 
-Сервіс використовує Chat Completions API із тайм-аутом 35 с, передає релевантні статті та текст повідомлення. Не логує ключ або вміст відповіді. Перш ніж використовувати реальні дані клієнтів, узгодьте обробку персональних даних стороннім LLM-провайдером.
+| Mode | Required configuration |
+| --- | --- |
+| Offline mock | `LLM_MODE=mock`, `LLM_BASE_URL=` |
+| Gemini | `LLM_MODE=gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| OpenAI | `LLM_MODE=openai`, `OPENAI_API_KEY`, `OPENAI_MODEL` |
+| Compatible Chat Completions API | `LLM_MODE=openai_compatible`, `LLM_BASE_URL`, `LLM_MODEL`, optionally `LLM_API_KEY` |
 
-## Тести й інструменти
+The mock returns a stable KB-derived draft after a configurable **5–30 second** delay. If `LLM_BASE_URL` is configured, mock mode can optionally contact that compatible gateway but ignores its generated text. **Leave `LLM_BASE_URL` empty for offline tests.**
 
-Запуск в Docker (тести користуються окремою тестовою PostgreSQL БД):
+### Optional Local AI Gateway (not required)
+
+The standard `compose.yml` has no dependency on an external network. A separate `compose.local-ai.yml` connects **only the worker** to an already existing gateway Docker network when explicitly requested.
+
+For a separately running OpenAI-compatible gateway, set **local** `.env` values (placeholders only):
+
+```dotenv
+LLM_MODE=openai_compatible
+LLM_BASE_URL=http://llm-api/v1
+LLM_MODEL=your-model-id
+LLM_API_KEY=your-local-gateway-token
+```
+
+If you already have that gateway network:
 
 ```powershell
-docker compose exec web python manage.py check
-docker compose exec web python manage.py test tests --verbosity 2
-# Або одним скриптом:
-powershell -ExecutionPolicy Bypass -File .\scripts\check.ps1
+docker network inspect local-ai-api
+docker compose -f compose.yml -f compose.local-ai.yml up -d --build
 ```
 
-Репозиторій містить автоматичні тести: автентифікація, валідація та дедуплікація webhook, конфліктні події, 500 записів, пошук KB, генерація, підтвердження/відхилення, повторна доставка, відновлення після збоїв.
+Use `LOCAL_AI_NETWORK` to override the network name if yours differs. Without a gateway, just run `docker compose up -d --build`. You do **not** need to create `local-ai-api`, install a local model, or configure a local gateway token.
 
-**Обмеження перевірки:** у середовищі складання архіву Django-залежності неможливо завантажити через недоступність мережі, тому виконано синтаксичну перевірку Python; повний запуск Django-тестів і `docker compose up` необхідно виконати на вашому ПК. Це не варто плутати із «тести пройшли».
+## Reliability and safeguards
 
-## Безпека та конфігурація
+- **Fast ACK:** database-first webhook ingestion, unique event/ticket IDs, immutable payload conflict detection.
+- **Global throttling:** Redis sliding window allows at most **60 LLM calls in 60 seconds** across workers.
+- **Recovery:** Celery Beat requeues work from durable database state after transient Redis/worker failure.
+- **Human in the loop:** no outbound reply without explicit operator approval.
+- **Idempotent delivery:** a permanent key per ticket, retries on transient failures, receiver-side deduplication. A real Helpdesk must implement its own idempotency for exactly-once semantics.
+- **Security:** separate operator/Admin accounts, CSRF, webhook secret, callback host allowlist, safe outbound HTTP policies. Production remote callbacks additionally need DNS/IP rebinding protection.
+- **Privacy:** the KB contains eight fictional demo articles. Do not submit real customer data to third-party LLMs without approval.
+- **Trade-offs:** keyword matching instead of embeddings; operator API currently returns up to 1,000 newest tickets; this is a demo, not a fully hardened production deployment.
 
-- `.env` виключено з Git та Docker build context. Усі випадкові секрети створює `scripts/setup.ps1`.
-- Система з Docker Compose доступна **лише на `127.0.0.1`**, а не у публічному інтернеті.
-- `DJANGO_DEBUG=0` за замовчуванням; обов'язкова перевірка наявності сильних ключів при старті.
-- Необхідна операторська автентифікація й CSRF-захист; webhook захищено спільним секретом.
-- `reply_url` — лише з `REPLY_ALLOWED_HOSTS`, заборонені вбудовані credentials, fragments та нестандартні порти. Для реальної інтеграції необхідний `https://` і розширена перевірка DNS/IP (щоб унеможливити DNS-rebinding), а також секрет підпису запитів за специфікацією зовнішнього Helpdesk.
-- У реальному продакшні потрібен HTTPS reverse proxy, `SESSION_COOKIE_SECURE=1`, `CSRF_COOKIE_SECURE=1`, правильні `DJANGO_ALLOWED_HOSTS` / `DJANGO_CSRF_TRUSTED_ORIGINS`, резервні копії PostgreSQL, обмеження доступу до панелі, централізовані логи та спостережність.
-- База знань містить **демонстраційні, вигадані інструкції** для умовного продукту — це не документація реально існуючої платформи.
 
-## Структура
+## Validation
+
+```powershell
+docker compose config -q
+docker compose exec -T web python manage.py check
+docker compose exec -T web python manage.py makemigrations --check --dry-run
+docker compose exec -T web python manage.py test tests --verbosity 2 --noinput
+```
+
+Tests use a temporary database and mocked network providers. They cover validation, duplicates and conflicts, 500 unique ingestions, operator access, retrieval, moderation, retry, Gemini and OpenAI-compatible modes. An end-to-end smoke test is available through `scripts/demo.ps1`; real provider calls may incur charges. Do not mistake test-client load for a full concurrent production benchmark.
+
+## Project layout
 
 ```text
-config/                   Django settings, URL routing, Celery
-helpdesk/                 Models, DRF serializers/views, KB, worker, state machine
-helpdesk/management/      seed_kb, bootstrap_operator
-helpdesk/migrations/      Стартова міграція PostgreSQL
-mock_helpdesk/            Сервіс емуляції прийому відповіді з SQLite дедуплікацією
-templates/                Вебкабінет, форма входу
-nginx/                    Reverse proxy
-scripts/                  Windows setup, demo request, checks
-tests/                    Тести API та workflow
-compose.yml               Docker Compose
-Dockerfile                Python/Gunicorn application
-.env.example              Шаблон конфігурації без секретів
-CLAUDE.md                 Нотатки для coding agents
+config/               Django configuration, routes, Celery
+helpdesk/             REST API, data models, LLM, KB, background tasks
+mock_helpdesk/        Separate persistent mock receiver
+templates/            Operator UI and login
+tests/                Regression tests
+scripts/              Setup, demo and checks
+nginx/                Local reverse proxy
+compose.yml           Standalone stack (no external networks)
+compose.local-ai.yml  Optional local AI network override
+.env.example          Public configuration template
+AGENTS.md             Canonical coding-agent instructions
+CLAUDE.md             References AGENTS.md
+LICENSE               MIT
 ```
-
-## Git / доставка
-
-Архів містить історію змістовних локальних Git-комітів. **Репозиторій не опубліковано в GitHub і не виконано публічний деплой.** Після перевірки на власному ПК можна створити GitHub-репозиторій та зробити push звичайним `git remote add origin ...`, `git push -u origin main` (без squash).
-
-Щоб зупинити тестову систему, використовуйте `docker compose down` — дані бази і mock Helpdesk залишаться у Docker volumes. `docker compose down -v` **видалить дані без можливості відновлення**, тому не використовуйте його випадково.

@@ -16,6 +16,7 @@ $values = @{
   'POSTGRES_PASSWORD' = New-SecureValue 32
   'WEBHOOK_SECRET' = New-SecureValue 40
   'OPERATOR_PASSWORD' = New-SecureValue 24
+  'ADMINROOT_PASSWORD' = New-SecureValue 24
 }
 $out = [IO.File]::ReadAllText($template)
 foreach ($key in $values.Keys) {
@@ -25,4 +26,5 @@ foreach ($key in $values.Keys) {
 [IO.File]::WriteAllText($target, $out, (New-Object System.Text.UTF8Encoding $false))
 Write-Host 'Created .env with random secrets. Passwords were NOT printed.'
 Write-Host 'Operator username: operator'
+Write-Host 'Admin username: adminroot'
 Write-Host 'For login credentials inspect .env locally. Never commit it to Git.'

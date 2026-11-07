@@ -5,7 +5,6 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 from helpdesk.models import Ticket, WebhookEvent
-from helpdesk.service import ingest
 
 SAMPLE = {
     "event_id": "evt_8f2a", "ticket_id": "T-1042", "customer_email": "user@example.com",
@@ -80,12 +79,17 @@ class WebhookTests(TestCase):
         self.assertEqual(Ticket.objects.count(), 0)
 
     def test_burst_ingestion_retains_500_unique_events(self):
-        # No LLM/provider calls in webhook path. No Redis dependency.
+        # Exercise the public webhook endpoint: it persists events without waiting
+        # for a broker, LLM call, or delivery task.
+        started = time.perf_counter()
         for i in range(500):
             item = {**SAMPLE, "event_id": f"e-{i}", "ticket_id": f"T-{i}"}
-            ticket, created = ingest(item)
-            self.assertTrue(created)
-            self.assertIsNotNone(ticket)
+            request_started = time.perf_counter()
+            response = self.post(item)
+            self.assertEqual(response.status_code, 202)
+            self.assertFalse(response.data["duplicate"])
+            self.assertLess(time.perf_counter() - request_started, 2)
+        self.assertLess(time.perf_counter() - started, 600)
         self.assertEqual(Ticket.objects.count(), 500)
         self.assertEqual(WebhookEvent.objects.count(), 500)
 

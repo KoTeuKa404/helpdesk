@@ -1,6 +1,7 @@
 from urllib.parse import urlsplit
 from django.conf import settings
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from .models import Ticket
 
 class WebhookSerializer(serializers.Serializer):
@@ -41,10 +42,12 @@ class TicketSerializer(serializers.ModelSerializer):
                   "knowledge_sources", "generation_attempts", "generation_error", "attempts", "delivery_status", "created_at", "updated_at"]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.IntegerField())
     def get_attempts(self, obj):
         delivery = getattr(obj, "delivery", None)
         return delivery.attempts if delivery else 0
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_delivery_status(self, obj):
         delivery = getattr(obj, "delivery", None)
         return delivery.status if delivery else None

@@ -59,9 +59,13 @@ def generate_draft(ticket_pk):
                 return
             current.draft = draft[:5000]
             current.knowledge_sources = [{"slug": x.slug, "title": x.title} for x in articles]
+            current.knowledge_context = [
+                {"slug": x.slug, "title": x.title, "content": x.content}
+                for x in articles
+            ]
             current.generation_error = ""
             current.status = Ticket.Status.REVIEW
-            current.save(update_fields=["draft", "knowledge_sources", "generation_error", "status", "updated_at"])
+            current.save(update_fields=["draft", "knowledge_sources", "knowledge_context", "generation_error", "status", "updated_at"])
     except Exception as exc:
         log.warning("Generation failed for ticket %s: %s", ticket_pk, type(exc).__name__)
         with transaction.atomic():

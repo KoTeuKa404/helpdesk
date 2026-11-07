@@ -30,6 +30,7 @@ class Ticket(models.Model):
     draft = models.TextField(blank=True)
     approved_message = models.TextField(blank=True)
     knowledge_sources = models.JSONField(default=list)
+    knowledge_context = models.JSONField(default=list, blank=True)
     generation_started_at = models.DateTimeField(null=True, blank=True)
     generation_token = models.UUIDField(null=True, blank=True)
     last_enqueued_at = models.DateTimeField(null=True, blank=True)

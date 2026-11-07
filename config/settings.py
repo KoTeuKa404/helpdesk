@@ -18,7 +18,7 @@ CSRF_TRUSTED_ORIGINS = [x.strip() for x in os.environ.get("DJANGO_CSRF_TRUSTED_O
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
-    "rest_framework", "helpdesk.apps.HelpdeskConfig",
+    "rest_framework", "drf_spectacular", "helpdesk.apps.HelpdeskConfig",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -58,12 +58,25 @@ else:
     }}
 
 REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"webhook": "600/min"},
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "AI-first Helpdesk API",
+    "DESCRIPTION": "Webhook для звернень і API кабінету оператора.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+    "TAGS": [
+        {"name": "Helpdesk", "description": "Прийом звернень із helpdesk"},
+        {"name": "Tickets", "description": "Перегляд і модерація звернень"},
+    ],
 }
 
 CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -113,8 +126,13 @@ if not DEBUG and os.environ.get("USE_SQLITE_TESTS") != "1":
         raise ImproperlyConfigured("Set a strong, random WEBHOOK_SECRET")
 REPLY_ALLOWED_HOSTS = {s.strip().lower() for s in os.environ.get("REPLY_ALLOWED_HOSTS", "mock-helpdesk").split(",") if s.strip()}
 LLM_MODE = os.environ.get("LLM_MODE", "mock").lower()
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("LLM_MODEL", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 MOCK_MIN_DELAY = max(0, int(os.environ.get("MOCK_MIN_DELAY", "5")))
 MOCK_MAX_DELAY = max(MOCK_MIN_DELAY, int(os.environ.get("MOCK_MAX_DELAY", "30")))
 LOGGING = {"version": 1, "disable_existing_loggers": False,

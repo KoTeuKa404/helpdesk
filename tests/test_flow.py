@@ -1,7 +1,7 @@
 """Generation, human moderation, idempotent delivery and retry."""
 from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -42,6 +42,79 @@ class WorkflowTests(TestCase):
         matches = retrieve(SAMPLE["message"])
         self.assertGreater(len(matches), 0)
         self.assertEqual(matches[0].slug, "export-pdf")
+
+    def test_generation_saves_the_exact_rag_context(self):
+        for slug, title, content, keywords in ARTICLES:
+            KnowledgeArticle.objects.create(slug=slug, title=title, content=content, keywords=keywords)
+        self.ready()
+        self.assertEqual(self.ticket.knowledge_context[0]["slug"], "export-pdf")
+        self.assertEqual(self.ticket.knowledge_context[0]["content"], ARTICLES[0][2])
+
+    def test_operator_dashboard_renders_for_staff(self):
+        browser = Client()
+        browser.force_login(self.operator)
+        response = browser.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Звернення клієнтів")
+        self.assertContains(response, "Чернетку можна відредагувати")
+
+    def test_adminroot_can_review_ticket_and_rag_in_django_admin(self):
+        article = KnowledgeArticle.objects.create(
+            slug="export-pdf", title="Експорт PDF", content="Кроки експорту для адміністратора",
+        )
+        self.ticket.knowledge_sources = [{"slug": article.slug, "title": article.title}]
+        self.ticket.knowledge_context = [{"slug": article.slug, "title": article.title, "content": article.content}]
+        self.ticket.draft = "Чернетка відповіді"
+        self.ticket.approved_message = "Надіслана відповідь"
+        self.ticket.save()
+        adminroot = get_user_model().objects.create_superuser(
+            username="adminroot", email="admin@example.com", password="admin-pass-12345",
+        )
+        browser = Client()
+        browser.force_login(adminroot)
+        response = browser.get(reverse("admin:helpdesk_ticket_change", args=[self.ticket.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Вхідне повідомлення")
+        self.assertContains(response, "Чернетка відповіді")
+        self.assertContains(response, "Надіслана відповідь")
+        self.assertContains(response, "Кроки експорту для адміністратора")
+        knowledge = browser.get(reverse("admin:helpdesk_knowledgearticle_changelist"))
+        self.assertEqual(knowledge.status_code, 200)
+        self.assertContains(knowledge, "Експорт PDF")
+
+    def test_adminroot_cannot_modify_or_delete_operational_records(self):
+        from helpdesk.models import WebhookEvent
+        adminroot = get_user_model().objects.create_superuser(
+            username="adminroot", email="admin@example.com", password="admin-pass-12345",
+        )
+        delivery = Delivery.objects.create(
+            ticket=self.ticket, idempotency_key="audit-readonly-test",
+        )
+        event = WebhookEvent.objects.get(ticket=self.ticket)
+        browser = Client()
+        browser.force_login(adminroot)
+        for model, pk in (("ticket", self.ticket.pk), ("delivery", delivery.pk),
+                          ("webhookevent", event.pk)):
+            with self.subTest(model=model):
+                url = reverse(f"admin:helpdesk_{model}_delete", args=[pk])
+                self.assertEqual(browser.post(url, {"post": "yes"}).status_code, 403)
+        self.assertTrue(Ticket.objects.filter(pk=self.ticket.pk).exists())
+        self.assertTrue(Delivery.objects.filter(pk=delivery.pk).exists())
+        self.assertTrue(WebhookEvent.objects.filter(pk=event.pk).exists())
+
+    def test_adminroot_is_separate_from_operator_dashboard(self):
+        adminroot = get_user_model().objects.create_superuser(
+            username="adminroot", email="admin@example.com", password="admin-pass-12345",
+        )
+        browser = Client()
+        browser.force_login(adminroot)
+        self.assertEqual(browser.get("/").status_code, 302)
+        self.assertEqual(browser.get("/admin/").status_code, 200)
+
+    def test_operator_cannot_open_django_admin(self):
+        browser = Client()
+        browser.force_login(self.operator)
+        self.assertEqual(browser.get("/admin/").status_code, 302)
 
     def test_generation_requires_human_approval(self):
         self.ready()
