@@ -1,0 +1,95 @@
+name: ai-first-helpdesk-django
+
+x-app: &app
+  build: .
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    env_file: .env
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_kb && python manage.py bootstrap_operator"]
+    restart: "no"
+
+  web:
+    <<: *app
+    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "45"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3)"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "config", "worker", "--loglevel=info", "--pool=threads", "--concurrency=24"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  beat:
+    <<: *app
+    command: ["celery", "-A", "config", "beat", "--loglevel=info"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+
+  mock-helpdesk:
+    image: python:3.12-alpine
+    working_dir: /mock
+    command: ["python", "-m", "mock_helpdesk.server"]
+    volumes:
+      - ./:/mock:ro
+      - mockdata:/data
+    ports:
+      - "127.0.0.1:8021:8001"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "127.0.0.1:8020:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      web: {condition: service_healthy}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  mockdata:
